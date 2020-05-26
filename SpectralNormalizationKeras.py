@@ -1,20 +1,16 @@
 # This code is from https://github.com/IShengFang/SpectralNormalizationKeras
+import tensorflow
+import tensorflow as tf
 
+import keras
 from keras import backend as K
 from keras.engine import *
-from keras.legacy import interfaces
 from keras import activations
 from keras import initializers
 from keras import regularizers
 from keras import constraints
-from keras.utils.generic_utils import func_dump
-from keras.utils.generic_utils import func_load
-from keras.utils.generic_utils import deserialize_keras_object
-from keras.utils.generic_utils import has_arg
+from keras.layers import InputSpec, Layer, Dense, Conv1D, Conv2D, Conv3D, Conv2DTranspose, Embedding
 from keras.utils import conv_utils
-from keras.legacy import interfaces
-from keras.layers import Dense, Conv1D, Conv2D, Conv3D, Conv2DTranspose, Embedding
-import tensorflow as tf
 
 class DenseSN(Dense):
     def build(self, input_shape):
@@ -58,7 +54,7 @@ class DenseSN(Dense):
         #normalize it
         W_bar = W_reshaped / sigma
         #reshape weight tensor
-        if training in {0, False}:
+        if training:
             W_bar = K.reshape(W_bar, W_shape)
         else:
             with tf.control_dependencies([self.u.assign(_u)]):
@@ -178,7 +174,7 @@ class _ConvSN(Layer):
             #normalize it
             W_bar = W_reshaped / sigma
             #reshape weight tensor
-            if training in {0, False}:
+            if training:
                 W_bar = K.reshape(W_bar, W_shape)
             else:
                 with tf.control_dependencies([self.u.assign(_u)]):
@@ -307,6 +303,7 @@ class ConvSN2D(Conv2D):
         self.input_spec = InputSpec(ndim=self.rank + 2,
                                     axes={channel_axis: input_dim})
         self.built = True
+    
     def call(self, inputs, training=None):
         def _l2normalize(v, eps=1e-12):
             return v / (K.sum(v ** 2) ** 0.5 + eps)
@@ -327,7 +324,7 @@ class ConvSN2D(Conv2D):
         #normalize it
         W_bar = W_reshaped / sigma
         #reshape weight tensor
-        if training in {0, False}:
+        if training:
             W_bar = K.reshape(W_bar, W_shape)
         else:
             with tf.control_dependencies([self.u.assign(_u)]):
@@ -406,7 +403,7 @@ class ConvSN1D(Conv1D):
         #normalize it
         W_bar = W_reshaped / sigma
         #reshape weight tensor
-        if training in {0, False}:
+        if training:
             W_bar = K.reshape(W_bar, W_shape)
         else:
             with tf.control_dependencies([self.u.assign(_u)]):
@@ -484,7 +481,7 @@ class ConvSN3D(Conv3D):
         #normalize it
         W_bar = W_reshaped / sigma
         #reshape weight tensor
-        if training in {0, False}:
+        if training:
             W_bar = K.reshape(W_bar, W_shape)
         else:
             with tf.control_dependencies([self.u.assign(_u)]):
@@ -547,7 +544,7 @@ class EmbeddingSN(Embedding):
         #normalize it
         W_bar = W_reshaped / sigma
         #reshape weight tensor
-        if training in {0, False}:
+        if training:
             W_bar = K.reshape(W_bar, W_shape)
         else:
             with tf.control_dependencies([self.u.assign(_u)]):
@@ -646,7 +643,7 @@ class ConvSN2DTranspose(Conv2DTranspose):
         #normalize it
         W_bar = W_reshaped / sigma
         #reshape weight tensor
-        if training in {0, False}:
+        if training:
             W_bar = K.reshape(W_bar, W_shape)
         else:
             with tf.control_dependencies([self.u.assign(_u)]):

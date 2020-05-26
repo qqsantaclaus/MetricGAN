@@ -45,8 +45,7 @@ from keras.layers import GlobalAveragePooling2D
 from joblib import Parallel, delayed
 from SpectralNormalizationKeras import DenseSN, ConvSN1D, ConvSN2D, ConvSN3D
 from pystoi.stoi import stoi
-from utils import Sp_and_phase, SP_to_wav, creatdir, inv_LP_audio
-from utils import read_batch_STOI, read_batch_PESQ
+from utils import Sp_and_phase, SP_to_wav, creatdir
 from pesq import pesq as pypesq
 from data_reader import DataGenerator
 from speech_embedding.emb_data_generator import query_joint_yield, CLEAN_DATA_RANGE, CLEAN_TEST_DATA_RANGE
@@ -63,74 +62,50 @@ import numpy.matlib
 import random
 import subprocess
 from tqdm import tqdm
-import soundfile as sf
 
 random.seed(999)
 
-########
 tf.test.is_gpu_available()
-from keras.backend.tensorflow_backend import set_session
-config = tf.ConfigProto()
-config.gpu_options.allow_growth = True  # dynamically grow the memory used on the GPU
-sess = tf.Session(config=config)
-set_session(sess)  # set this TensorFlow session as the default session for Keras
-############
 
 TargetMetric='pesq' # It can be either 'pesq' or 'stoi' for now. Of course, it can be any arbitary metric of interest.
 Target_score=np.asarray([1.0]) # Target metric score you want generator to generate. s in e.q. (5) of the paper.
 
 output_path='train_outputs'
-PESQ_path='.'
+# PESQ_path='.'
 
 GAN_epoch=200
 mask_min=0.05
-num_of_sampling=800
+num_of_sampling=1600
 num_of_disc_sample=400
-num_of_valid_sample=140
+# num_of_valid_sample=1000
 clipping_constant=10.0  # To prevent clipping of noisy waveform. (i.e., Noisy=(clean+noise)/10)
 
 maxv = np.iinfo(np.int16).max 
 
-# def read_pesq_exe(clean_file, enhanced_file, sr):
-#     try:
-#         cmd = PESQ_path+'/PESQ_old {} {} +{}'.format(clean_file, enhanced_file, sr)
-#         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
-#         out = proc.communicate()
-#         pesq = float(out[0][-6:-1])
-#         return (pesq + 0.5) / 5.0
-#     except Exception as e:
-#         print("Error:", e, cmd)
-#         return 0.5
-    
-# def read_pesq(clean_file, enhanced_file, sr):
-#     try:
-#         clean_wav, _ = librosa.load(clean_file, sr=16000)     
-#         enhanced_wav, _ = librosa.load(enhanced_file, sr=16000)
-#         pesq = pypesq(sr, clean_wav, enhanced_wav, 'wb')
-#         return (pesq + 5.0-4.643888473510742) / 5.0
-#     except Exception as e:
-#         print(e)
-#         return 0.5
+def read_pesq(clean, enhanced, sr):
+    try:
+        pesq = pypesq(sr, clean, enhanced, 'wb')
+        return (pesq + 5.0-4.643888473510742) / 5.0
+    except Exception as e:
+        return 1.0
+#     return (pesq+0.5)/5.0
 
-# # Parallel computing for accelerating
-# def read_batch_PESQ(clean_list, enhanced_list):
-#     pesq = Parallel(n_jobs=40)(delayed(read_pesq_exe)(clean_list[i], enhanced_list[i], 16000) for i in range(len(enhanced_list)))
-#     return pesq
+# Parallel computing for accelerating
+def read_batch_PESQ(clean_list, enhanced_list):
+    pesq = Parallel(n_jobs=10)(delayed(read_pesq)(clean_list[i], enhanced_list[i], 16000) for i in range(len(enhanced_list)))
+    return pesq
         
-# def read_STOI(clean_file, enhanced_file):
-#     try:
-#         clean_wav, _ = librosa.load(clean_file, sr=16000)     
-#         enhanced_wav, _ = librosa.load(enhanced_file, sr=16000)
-#         stoi_score = stoi(clean_wav, enhanced_wav, 16000, extended=False) 
-#         return stoi_score
-#     except Exception as e:
-#         print("Error:", e, clean_file, enhanced_file)
-#         return 1.0
+def read_STOI(clean_wav, enhanced_wav):
+    try:
+        stoi_score = stoi(clean_wav, enhanced_wav, 16000, extended=False) 
+        return stoi_score
+    except Exception as e:
+        return 1.0
     
-# # Parallel computing for accelerating    
-# def read_batch_STOI(clean_list, enhanced_list):
-#     stoi_score = Parallel(n_jobs=30)(delayed(read_STOI)(clean_list[i], enhanced_list[i]) for i in range(len(enhanced_list)))
-#     return stoi_score
+# Parallel computing for accelerating    
+def read_batch_STOI(clean_list, enhanced_list):
+    stoi_score = Parallel(n_jobs=10)(delayed(read_STOI)(clean_list[i], enhanced_list[i]) for i in range(len(enhanced_list)))
+    return stoi_score
     
 def List_concat(score, enhanced_list):
     concat_list=[]
@@ -177,8 +152,8 @@ def Discriminator_train_data_generator(data_list):
     while True:
         for index in range(len(data_list)):
             true_score = np.asarray([float(data_list[index][0])])
-            audio_wav, _ = librosa.load(data_list[index][1], sr=16000) 
-            clean_wav, _ = librosa.load(data_list[index][2], sr=16000) 
+            audio_wav = data_list[index][1]
+            clean_wav = data_list[index][2]
             noisy_LP, _, _ =Sp_and_phase(audio_wav)       
             clean_LP, _, _ =Sp_and_phase(clean_wav)
 #             print(true_score.shape)
@@ -203,6 +178,13 @@ def Discriminator_train_data_generator(data_list):
 #     noisy_LP, _, _= Sp_and_phase(d_noisy*clipping_constant)
 
 #     return noisy_LP_normalization, noisy_LP, Nphase, signal_length
+
+def inv_LP_audio(IRM, noisy_LP_normalization, noisy_LP, Nphase, signal_length):
+    mask=np.maximum(IRM, mask_min)
+    E=np.squeeze(noisy_LP*mask)
+    enhanced_wav=SP_to_wav(E.T,Nphase, signal_length)
+    enhanced_wav=enhanced_wav/np.max(abs(enhanced_wav))
+    return enhanced_wav
     
 #########################  Training data #######################
 SR = 16000
@@ -222,12 +204,10 @@ BATCH_SIZE = 8
 # dropout = config['dropout'] if "dropout" in config else 0.0
 inject_noise = True  
 use_real_noise = True
-augment_speech = True
-augment_reverb = True
-augment_noise = True
+augment_speech = False
+augment_reverb = False
+augment_noise = False
 reload_model = "current_SE_model.h5"
-reload_D_model = "current_D_model.h5"
-# reload_D_model = None
 extra_subsets = False
     
 #%% Speech audio files
@@ -441,16 +421,13 @@ MetricGAN.compile(loss='mse', optimizer='adam')
 
 if reload_model is not None:
     de_model.load_weights(reload_model)
-    
-if reload_D_model is not None:
-    Discriminator.load_weights(reload_D_model)
 
 ######## Model define end #########
 Test_STOI = []
 Test_PESQ = []
 
 Previous_Discriminator_training_list=[]
-# shutil.rmtree(output_path)
+shutil.rmtree(output_path)
 
 for gan_epoch in np.arange(1, GAN_epoch+1):
     
@@ -472,31 +449,25 @@ for gan_epoch in np.arange(1, GAN_epoch+1):
                                 max_queue_size=1, 
                                 workers=1,
                                 )
-        # save the current SE model
-        de_model.save('current_SE_model.h5')     
 
     # Evaluate the performance of generator in a validation set.
     print('Evaluate G by validation data ...')   
     Test_enhanced_list=[]
     Test_clean_list=[]
     utterance=0
-    for i in tqdm(range(num_of_valid_sample)):
-        d_noisy, d_clean, noisy_LP_normalization, noisy_LP, Nphase, signal_length = next(d_val_noisy_iter) 
+    for i in tqdm(range(10)):
+        d_noisy, d_clean, noisy_LP_normalization, noisy_LP, Nphase, signal_length, clean_name = next(d_val_noisy_iter) 
         IRM=de_model.predict(noisy_LP_normalization)
-        enhanced_wav = inv_LP_audio(IRM, noisy_LP, Nphase, signal_length, use_clip=False)
+        enhanced_wav = inv_LP_audio(IRM, noisy_LP_normalization, noisy_LP, Nphase, signal_length)
         
-        if utterance<10: # Only seperatly save the firt 20 utterance for listening comparision 
+        if utterance<3: # Only seperatly save the firt 20 utterance for listening comparision 
             enhanced_name=output_path+"/epoch"+str(gan_epoch)+"/"+"Test_epoch"+str(gan_epoch)+"/"+ str(utterance) +"@"+str(gan_epoch)+".wav"
-            clean_name=output_path+"/epoch"+str(gan_epoch)+"/"+"Test_epoch"+str(gan_epoch)+"/"+ str(utterance) +"@"+str(gan_epoch)+"_clean.wav"
         else:           # others will be overrided to save hard disk memory.
             enhanced_name=output_path+"/temp"+"/"+str(utterance)+"@"+str(gan_epoch)+".wav"
-            clean_name=output_path+"/temp"+"/"+str(utterance)+"@"+str(gan_epoch)+"_clean.wav"
-        sf.write(enhanced_name, enhanced_wav, 16000)        
-        sf.write(clean_name, d_clean/np.max(np.abs(d_clean)), 16000)
-        
+        librosa.output.write_wav(enhanced_name, enhanced_wav, 16000)
         utterance+=1
-        Test_enhanced_list.append(enhanced_name)  
-        Test_clean_list.append(clean_name)
+        Test_enhanced_list.append(enhanced_wav)  
+        Test_clean_list.append(d_clean/np.max(np.abs(d_clean)))
               
     # Calculate True STOI    
     test_STOI=read_batch_STOI(Test_clean_list, Test_enhanced_list)     
@@ -508,25 +479,28 @@ for gan_epoch in np.arange(1, GAN_epoch+1):
     print(np.mean(test_PESQ)*5.-0.5)
     Test_PESQ.append(np.mean(test_PESQ)*5.-0.5)
     
-    # Plot learning curves
-    plt.figure(1)
-    plt.plot(range(1,gan_epoch+1),Test_STOI,'b',label='ValidPESQ')
-    plt.xlim([1,gan_epoch])
-    plt.xlabel('GAN_epoch')
-    plt.ylabel('STOI')
-    plt.grid(True)
-    plt.show()
-    plt.savefig('Test_STOI.png', dpi=150)
+#     # Plot learning curves
+#     plt.figure(1)
+#     plt.plot(range(1,gan_epoch+1),Test_STOI,'b',label='ValidPESQ')
+#     plt.xlim([1,gan_epoch])
+#     plt.xlabel('GAN_epoch')
+#     plt.ylabel('STOI')
+#     plt.grid(True)
+#     plt.show()
+#     plt.savefig('Test_STOI.png', dpi=150)
     
-    plt.figure(2)
-    plt.plot(range(1,gan_epoch+1),Test_PESQ,'r',label='ValidPESQ')
-    plt.xlim([1,gan_epoch])
-    plt.xlabel('GAN_epoch')
-    plt.ylabel('PESQ')
-    plt.grid(True)
-    plt.show()
-    plt.savefig('Test_PESQ.png', dpi=150)
+#     plt.figure(2)
+#     plt.plot(range(1,gan_epoch+1),Test_PESQ,'r',label='ValidPESQ')
+#     plt.xlim([1,gan_epoch])
+#     plt.xlabel('GAN_epoch')
+#     plt.ylabel('PESQ')
+#     plt.grid(True)
+#     plt.show()
+#     plt.savefig('Test_PESQ.png', dpi=150)
     
+    # save the current SE model
+    de_model.save('current_SE_model.h5')     
+
     print('Sample training data for discriminator training...')
     Test_enhanced_list=[]
     Test_clean_list=[]
@@ -534,33 +508,22 @@ for gan_epoch in np.arange(1, GAN_epoch+1):
     for i in tqdm(range(num_of_disc_sample)):
         d_noisy, d_clean, noisy_LP_normalization, noisy_LP, Nphase, signal_length = next(d_train_noisy_iter) 
         IRM=de_model.predict(noisy_LP_normalization)
-        enhanced_wav = inv_LP_audio(IRM, noisy_LP, Nphase, signal_length)
-        enhanced_name = output_path+"/For_discriminator_training/"+str(i)+"@"+str(gan_epoch)+".wav"
-        clean_name = output_path+"/For_discriminator_training/"+str(i)+"@"+str(gan_epoch)+"_clean.wav"
-        sf.write(enhanced_name, enhanced_wav, 16000)  
-        sf.write(clean_name, d_clean / np.max(np.abs(d_clean[:])), 16000)
-        Test_enhanced_list.append(enhanced_name)
-        Test_clean_list.append(clean_name)
+        enhanced_wav = inv_LP_audio(IRM, noisy_LP_normalization, noisy_LP, Nphase, signal_length)
+        Test_enhanced_list.append(enhanced_wav)
+        Test_clean_list.append(d_clean/np.max(np.abs(d_clean)))
     
-#     score_list = []
-#     per_share = 40
-#     for i in tqdm(range(num_of_sampling // per_share)):
-#         s_ind = per_share * i
-#         e_ind = per_share * (i+1)
-#         if TargetMetric=='stoi':
-#             # Calculate True STOI score   
-#             score_list.extend(read_batch_STOI(train_set_generator, Test_clean_list[s_ind:e_ind], Test_enhanced_list[s_ind:e_ind]))
-#         elif TargetMetric=='pesq':
-#             # Calculate True PESQ score
-#             score_list.extend(read_batch_PESQ(train_set_generator, Test_clean_list[s_ind:e_ind], Test_enhanced_list[s_ind:e_ind]))
-##     print(score_list)
-
-    if TargetMetric=='stoi':
-        # Calculate True STOI score   
-        score_list = read_batch_STOI(Test_clean_list, Test_enhanced_list)
-    elif TargetMetric=='pesq':
-        # Calculate True PESQ score
-        score_list = read_batch_PESQ(Test_clean_list, Test_enhanced_list)
+    score_list = []
+    per_share = 40
+    for i in tqdm(range(num_of_sampling // per_share)):
+        s_ind = per_share * i
+        e_ind = per_share * (i+1)
+        if TargetMetric=='stoi':
+            # Calculate True STOI score   
+            score_list.extend(read_batch_STOI(Test_clean_list[s_ind:e_ind], Test_enhanced_list[s_ind:e_ind]))
+        elif TargetMetric=='pesq':
+            # Calculate True PESQ score
+            score_list.extend(read_batch_PESQ(Test_clean_list[s_ind:e_ind], Test_enhanced_list[s_ind:e_ind]))
+#     print(score_list)
 
     print('Discriminator training...')                            
     ## Training for current list    
@@ -594,9 +557,8 @@ for gan_epoch in np.arange(1, GAN_epoch+1):
                                 max_queue_size=1, 
                                 workers=1,
                                 )
-    Discriminator.save('current_D_model.h5')  
+                                
     shutil.rmtree(output_path+'/temp') # to save harddisk memory
-    
 
 end_time = time.time()
 print('The code for this file ran for %.2fm' % ((end_time - start_time) / 60.))
